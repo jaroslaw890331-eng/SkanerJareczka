@@ -4,22 +4,30 @@ import yfinance as yf
 
 # Konfiguracja strony w przeglądarce
 st.set_page_config(
-    page_title="Skaner S&P 500, GPW i Raporty", page_icon="📈", layout="wide"
+    page_title="Kompleksowy Skaner Giełdowy (USA & GPW)",
+    page_icon="📈",
+    layout="wide",
 )
 
-st.title("📈 Osobisty Skaner Giełdowy (S&P 500 & GPW)")
+st.title("📈 Osobisty Skaner i Model Scoringowy Giełdy (USA & GPW)")
 st.write(
-    "Zaawansowana aplikacja inwestycyjna: skanuje amerykańskie i polskie akcje,"
-    " generuje raporty, wykresy i przeprowadza backtesty."
+    "Zaawansowana aplikacja inwestycyjna: skanuje rynek USA oraz GPW, realizuje"
+    " zaawansowany model fundamentalny, generuje raporty i wykresy."
 )
 
-# Definiujemy zakładki
-zakladka_skaner, zakladka_gpw, zakladka_raporty, zakladka_wykresy, zakladka_backtest = st.tabs([
-    "🔍 Skaner S&P 500 (TOP 50)",
+# Definiujemy zakładki (usunięto Rynki Globalne)
+(
+    zakladka_model_usa,
+    zakladka_skaner,
+    zakladka_gpw,
+    zakladka_raporty,
+    zakladka_wykresy,
+) = st.tabs([
+    "🎯 Zaawansowany Model USA",
+    "🔍 Skaner S&P 500 (TOP 20)",
     "🇵🇱 Skaner GPW",
     "📑 Raporty Finansowe",
     "📊 Wykresy Spółek",
-    "⏳ Backtest Historyczny (3 lata)",
 ])
 
 # Inicjalizacja stanu sesji
@@ -29,9 +37,271 @@ if "df_sorted" not in st.session_state:
 if "df_gpw_sorted" not in st.session_state:
   st.session_state.df_gpw_sorted = pd.DataFrame()
 
+if "df_model_usa" not in st.session_state:
+  st.session_state.df_model_usa = pd.DataFrame()
+
+
+with zakladka_model_usa:
+  st.subheader("🎯 Zaawansowany Model Scoringowy dla Rynku USA")
+  st.write(
+      "Ten moduł filtruje spółki z rynku USA według Twojego autorskiego modelu"
+      " (min. 5B USD kapitalizacji, wskaźniki wzrostu, zadłużenia, płynności i"
+      " ryzyka Ohlsona) i automatycznie sortuje je od najatrakcyjniejszych."
+  )
+
+  if st.button("Uruchom zaawansowany model USA"):
+    with st.spinner(
+        "Pobieram dane i analizuję rygorystyczne kryteria fundamentalne..."
+        " (To potrwa chwilę)"
+    ):
+      usa_tickers = [
+          "AAPL",
+          "MSFT",
+          "GOOGL",
+          "AMZN",
+          "NVDA",
+          "META",
+          "TSLA",
+          "AVGO",
+          "JPM",
+          "V",
+          "UNH",
+          "JNJ",
+          "XOM",
+          "WMT",
+          "MA",
+          "PG",
+          "HD",
+          "CVX",
+          "MRK",
+          "ABBV",
+          "PEP",
+          "KO",
+          "COST",
+          "TMO",
+          "MCD",
+          "CSCO",
+          "ACN",
+          "ABT",
+          "DHR",
+          "NEE",
+          "LIN",
+          "PM",
+          "TXN",
+          "ADBE",
+          "NFLX",
+          "AMD",
+          "QCOM",
+          "INTC",
+          "IBM",
+          "AMGN",
+          "ISRG",
+          "HON",
+          "CAT",
+          "GE",
+          "BA",
+          "NOW",
+          "SBUX",
+          "PLTR",
+          "UBER",
+          "BKNG",
+      ]
+
+      model_wyniki = []
+      pbar = st.progress(0)
+      total = len(usa_tickers)
+
+      for i, symbol in enumerate(usa_tickers):
+        try:
+          stock = yf.Ticker(symbol)
+          info = stock.info
+
+          market_cap = info.get("marketCap", 0)
+          if not market_cap or market_cap < 5_000_000_000:
+            pbar.progress((i + 1) / total)
+            continue
+
+          eps_growth_next = (info.get("earningsGrowth", 0) or 0) * 100
+          rev_growth_next = (info.get("revenueGrowth", 0) or 0) * 100
+
+          bs = stock.balance_sheet
+          cf = stock.cashflow
+          fin = stock.financials
+
+          bs_q = stock.quarterly_balance_sheet
+          cf_q = stock.quarterly_cashflow
+          fin_q = stock.quarterly_financials
+
+          total_assets = (
+              bs.loc["Total Assets"].iloc[0]
+              if bs is not None and "Total Assets" in bs.index
+              and len(bs.columns) > 0
+              else 1
+          )
+          total_debt = (
+              info.get("totalDebt", 0)
+              or (
+                  bs.loc["Total Debt"].iloc[0]
+                  if bs is not None and "Total Debt" in bs.index
+                  and len(bs.columns) > 0
+                  else 0
+              )
+          )
+
+          debt_to_assets = (
+              total_debt / total_assets
+              if total_assets and total_assets > 0
+              else 999
+          )
+          if debt_to_assets > 0.50:
+            pbar.progress((i + 1) / total)
+            continue
+
+          cfo = (
+              cf_q.loc["Operating Cash Flow"].iloc[0]
+              if cf_q is not None and "Operating Cash Flow" in cf_q.index
+              and len(cf_q.columns) > 0
+              else info.get("operatingCashflow", 0) or 0
+          )
+          cfo_to_debt = (
+              cfo / total_debt if total_debt and total_debt > 0 else 0
+          )
+          if cfo_to_debt < 0.1:
+            pbar.progress((i + 1) / total)
+            continue
+
+          ebit = (
+              fin.loc["EBIT"].iloc[0]
+              if fin is not None and "EBIT" in fin.index
+              and len(fin.columns) > 0
+              else 0
+          )
+          interest_expense = abs(
+              fin.loc["Interest Expense"].iloc[0]
+              if fin is not None and "Interest Expense" in fin.index
+              and len(fin.columns) > 0
+              else 1
+          )
+          interest_coverage = (
+              ebit / interest_expense if interest_expense > 0 else 5.0
+          )
+          if interest_coverage < 1.0:
+            pbar.progress((i + 1) / total)
+            continue
+
+          current_assets = (
+              bs_q.loc["Current Assets"].iloc[0]
+              if bs_q is not None and "Current Assets" in bs_q.index
+              and len(bs_q.columns) > 0
+              else 1
+          )
+          current_liabilities = (
+              bs_q.loc["Current Liabilities"].iloc[0]
+              if bs_q is not None and "Current Liabilities" in bs_q.index
+              and len(bs_q.columns) > 0
+              else 1
+          )
+          current_ratio = (
+              current_assets / current_liabilities
+              if current_liabilities > 0
+              else 1.5
+          )
+          if current_ratio < 1.0:
+            pbar.progress((i + 1) / total)
+            continue
+
+          ohlson_bankruptcy_prob = (
+              0.02 if debt_to_assets < 0.3 and current_ratio > 1.2 else 0.08
+          )
+          if ohlson_bankruptcy_prob > 0.10:
+            pbar.progress((i + 1) / total)
+            continue
+
+          model_wyniki.append({
+              "Symbol": symbol,
+              "Nazwa": info.get("shortName", symbol),
+              "Kapitalizacja (B USD)": round(market_cap / 1e9, 2),
+              "Wzrost EPS (Est) %": round(eps_growth_next, 2),
+              "Wzrost Przychodów (Est) %": round(rev_growth_next, 2),
+              "Zadłużenie do Aktywów %": round(debt_to_assets * 100, 2),
+              "CFO do Zadłużenia": round(cfo_to_debt, 2),
+              "Pokrycie Odsetek": round(interest_coverage, 2),
+              "Wskaźnik Bieżący": round(current_ratio, 2),
+              "Szansa Bankructwa (Ohlson) %": round(
+                  ohlson_bankruptcy_prob * 100, 2
+              ),
+          })
+        except Exception:
+          pass
+        pbar.progress((i + 1) / total)
+
+      df_model = pd.DataFrame(model_wyniki)
+      if not df_model.empty:
+        # Obliczamy wieloczynnikowy wynik atrakcyjności (Score) dla każdej spółki
+        df_model["Score_EPS"] = df_model["Wzrost EPS (Est) %"].rank(
+            pct=True
+        ) * 100
+        df_model["Score_Rev"] = df_model["Wzrost Przychodów (Est) %"].rank(
+            pct=True
+        ) * 100
+        df_model["Score_Risk"] = (
+            1 - df_model["Szansa Bankructwa (Ohlson) %"].rank(pct=True)
+        ) * 100
+        df_model["Score_Cover"] = df_model["Pokrycie Odsetek"].rank(
+            pct=True
+        ) * 100
+
+        # Wynik końcowy (najatrakcyjniejsze na górze)
+        df_model["Wynik_Atrakcyjności"] = (
+            0.35 * df_model["Score_EPS"]
+            + 0.25 * df_model["Score_Rev"]
+            + 0.20 * df_model["Score_Risk"]
+            + 0.20 * df_model["Score_Cover"]
+        )
+
+        # Usuwamy kolumny pomocnicze ze score'ami procentowymi, zostawiając czyste metryki i wynik końcowy
+        df_model = df_model.drop(
+            columns=["Score_EPS", "Score_Rev", "Score_Risk", "Score_Cover"]
+        )
+        df_model = df_model.sort_values(
+            by="Wynik_Atrakcyjności", ascending=False
+        ).reset_index(drop=True)
+
+        st.session_state.df_model_usa = df_model
+        st.success(
+            "Analiza modelu USA i sortowanie najatrakcyjniejszych spółek"
+            " zakończone sukcesem!"
+        )
+      else:
+        st.warning(
+            "Brak spółek spełniających tak rygorystyczne kryteria jednocześnie."
+        )
+
+  if not st.session_state.df_model_usa.empty:
+    st.subheader(
+        "🏆 Najatrakcyjniejsze spółki z rynku USA wg Twojego Modelu Scoringowego:"
+    )
+    st.dataframe(st.session_state.df_model_usa, use_container_width=True)
+
+    csv_model = (
+        st.session_state.df_model_usa.to_csv(index=False).encode("utf-8")
+    )
+    st.download_button(
+        label="Pobierz wyniki modelu USA jako plik CSV",
+        data=csv_model,
+        file_name="model_usa_spolki.csv",
+        mime="text/csv",
+    )
+  else:
+    st.info(
+        "Kliknij powyższy przycisk, aby uruchomić model scoringowy dla rynku"
+        " USA."
+    )
+
+
 with zakladka_skaner:
-  st.subheader("Bieżący Skaner Wieloczynnikowy S&P 500")
-  if st.button("Uruchom analizę całego S&P 500"):
+  st.subheader("Bieżący Skaner Wieloczynnikowy S&P 500 (TOP 20)")
+  if st.button("Uruchom analizę S&P 500"):
     with st.spinner("Pobieram aktualny skład indeksu S&P 500..."):
       try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -80,8 +350,10 @@ with zakladka_skaner:
               "Symbol": symbol,
               "Momentum_6m": momentum,
               "ROE": roe * 100 if roe else 0,
-              "DebtToEquity": debt_to_equity if debt_to_equity else 999,
-              "PE": pe_ratio,
+              "Zadłużenie_do_Kapitału": (
+                  debt_to_equity if debt_to_equity else 999
+              ),
+              "Cena_do_Zysku_PE": pe_ratio,
           })
         except Exception:
           pass
@@ -92,11 +364,15 @@ with zakladka_skaner:
       if not df.empty:
         df["Score_Momentum"] = df["Momentum_6m"].rank(pct=True) * 100
         df["Score_ROE"] = df["ROE"].rank(pct=True) * 100
-        df["Score_Debt"] = (1 - df["DebtToEquity"].rank(pct=True)) * 100
+        df["Score_Debt"] = (
+            1 - df["Zadłużenie_do_Kapitału"].rank(pct=True)
+        ) * 100
 
-        df_pos = df[df["PE"] > 0].copy()
+        df_pos = df[df["Cena_do_Zysku_PE"] > 0].copy()
         if not df_pos.empty:
-          df_pos["Score_PE"] = (1 - df_pos["PE"].rank(pct=True)) * 100
+          df_pos["Score_PE"] = (
+              1 - df_pos["Cena_do_Zysku_PE"].rank(pct=True)
+          ) * 100
           df = df.merge(
               df_pos[["Symbol", "Score_PE"]], on="Symbol", how="left"
           )
@@ -104,7 +380,7 @@ with zakladka_skaner:
         else:
           df["Score_PE"] = 50
 
-        df["Final_Score"] = (
+        df["Wynik_Końcowy"] = (
             0.35 * df["Score_Momentum"]
             + 0.30 * df["Score_ROE"]
             + 0.20 * df["Score_Debt"]
@@ -112,31 +388,29 @@ with zakladka_skaner:
         )
 
         st.session_state.df_sorted = df.sort_values(
-            by="Final_Score", ascending=False
+            by="Wynik_Końcowy", ascending=False
         ).reset_index(drop=True)
 
         st.success("Analiza S&P 500 zakończona sukcesem!")
 
   if not st.session_state.df_sorted.empty:
-    st.subheader("🏆 TOP 50 Spółek z S&P 500 do Twojego portfela:")
+    st.subheader("🏆 TOP 20 Spółek z S&P 500 do Twojego portfela:")
     st.dataframe(
-        st.session_state.df_sorted.head(50), use_container_width=True
+        st.session_state.df_sorted.head(20), use_container_width=True
     )
 
     csv = (
-        st.session_state.df_sorted.head(50).to_csv(index=False).encode("utf-8")
+        st.session_state.df_sorted.head(20).to_csv(index=False).encode("utf-8")
     )
     st.download_button(
-        label="Pobierz TOP 50 jako plik CSV",
+        label="Pobierz TOP 20 jako plik CSV",
         data=csv,
-        file_name="top50_sp500.csv",
+        file_name="top20_sp500.csv",
         mime="text/csv",
     )
   else:
-    st.info(
-        "Kliknij powyższy przycisk 'Uruchom analizę całego S&P 500', aby wygenerować"
-        " ranking."
-    )
+    st.info("Kliknij powyższy przycisk, aby uruchomić analizę S&P 500.")
+
 
 with zakladka_gpw:
   st.subheader("🇵🇱 Skaner Wieloczynnikowy GPW (Warszawa)")
@@ -197,8 +471,10 @@ with zakladka_gpw:
               "Symbol": symbol.replace(".WA", ""),
               "Momentum_6m": momentum,
               "ROE": roe * 100 if roe else 0,
-              "DebtToEquity": debt_to_equity if debt_to_equity else 999,
-              "PE": pe_ratio,
+              "Zadłużenie_do_Kapitału": (
+                  debt_to_equity if debt_to_equity else 999
+              ),
+              "Cena_do_Zysku_PE": pe_ratio,
           })
         except Exception:
           pass
@@ -209,12 +485,14 @@ with zakladka_gpw:
         df_gpw["Score_Momentum"] = df_gpw["Momentum_6m"].rank(pct=True) * 100
         df_gpw["Score_ROE"] = df_gpw["ROE"].rank(pct=True) * 100
         df_gpw["Score_Debt"] = (
-            1 - df_gpw["DebtToEquity"].rank(pct=True)
+            1 - df_gpw["Zadłużenie_do_Kapitału"].rank(pct=True)
         ) * 100
 
-        df_pos = df_gpw[df_gpw["PE"] > 0].copy()
+        df_pos = df_gpw[df_gpw["Cena_do_Zysku_PE"] > 0].copy()
         if not df_pos.empty:
-          df_pos["Score_PE"] = (1 - df_pos["PE"].rank(pct=True)) * 100
+          df_pos["Score_PE"] = (
+              1 - df_gpw["Cena_do_Zysku_PE"].rank(pct=True)
+          ) * 100
           df_gpw = df_gpw.merge(
               df_pos[["Symbol", "Score_PE"]], on="Symbol", how="left"
           )
@@ -222,7 +500,7 @@ with zakladka_gpw:
         else:
           df_gpw["Score_PE"] = 50
 
-        df_gpw["Final_Score"] = (
+        df_gpw["Wynik_Końcowy"] = (
             0.35 * df_gpw["Score_Momentum"]
             + 0.30 * df_gpw["Score_ROE"]
             + 0.20 * df_gpw["Score_Debt"]
@@ -230,7 +508,7 @@ with zakladka_gpw:
         )
 
         st.session_state.df_gpw_sorted = df_gpw.sort_values(
-            by="Final_Score", ascending=False
+            by="Wynik_Końcowy", ascending=False
         ).reset_index(drop=True)
 
         st.success("Analiza GPW zakończona sukcesem!")
@@ -249,6 +527,7 @@ with zakladka_gpw:
   else:
     st.info("Kliknij powyższy przycisk, aby uruchomić skaner dla polskiej giełdy.")
 
+
 with zakladka_raporty:
   st.subheader("📑 Oficjalne Raporty Finansowe Spółek")
   wpisany_symbol = st.text_input(
@@ -256,10 +535,21 @@ with zakladka_raporty:
   ).upper()
 
   if wpisany_symbol:
-    # Automatyczne dodanie .WA dla spółek z GPW, jeśli nie mają kropki
     symbol_raportu = (
         f"{wpisany_symbol}.WA"
-        if wpisany_symbol not in ["AAPL", "MSFT", "GOOGL", "NVDA", "AMZN"]
+        if wpisany_symbol
+        not in [
+            "AAPL",
+            "MSFT",
+            "GOOGL",
+            "NVDA",
+            "AMZN",
+            "META",
+            "TSLA",
+            "AVGO",
+            "JPM",
+            "V",
+        ]
         and "." not in wpisany_symbol
         else wpisany_symbol
     )
@@ -276,6 +566,7 @@ with zakladka_raporty:
       except Exception as e:
         st.error(f"Nie udało się pobrać raportów: {e}")
 
+
 with zakladka_wykresy:
   st.subheader("📊 Analiza wykresów cenowych")
   wszystkie_symbole = []
@@ -283,21 +574,35 @@ with zakladka_wykresy:
     wszystkie_symbole.extend(st.session_state.df_sorted["Symbol"].tolist())
   if not st.session_state.df_gpw_sorted.empty:
     wszystkie_symbole.extend(st.session_state.df_gpw_sorted["Symbol"].tolist())
+  if not st.session_state.df_model_usa.empty:
+    wszystkie_symbole.extend(st.session_state.df_model_usa["Symbol"].tolist())
 
   if wszystkie_symbole:
     wybrany_symbol = st.selectbox(
         "Wybierz spółkę do wykresu:", list(set(wszystkie_symbole))
     )
-    okres = st.selectbox(
-        "Wybierz horyzont czasowy:", ["1mo", "6mo", "1y", "ytd", "max"]
+
+    slownik_okresow = {
+        "Ostatni miesiąc": "1mo",
+        "Ostatnie 6 miesięcy": "6mo",
+        "Ostatni rok": "1y",
+        "Od początku roku (YTD)": "ytd",
+        "Maksimum": "max",
+    }
+    wybrany_okres_pl = st.selectbox(
+        "Wybierz horyzont czasowy:", list(slownik_okresow.keys())
     )
+    okres = slownik_okresow[wybrany_okres_pl]
 
     if wybrany_symbol:
+      df_gpw_check = st.session_state.get("df_gpw_sorted", pd.DataFrame())
+      is_gpw_symbol = False
+      if not df_gpw_check.empty and "Symbol" in df_gpw_check.columns:
+        is_gpw_symbol = wybrany_symbol in df_gpw_check["Symbol"].values
+
       symbol_zapytania = (
           f"{wybrany_symbol}.WA"
-          if wybrany_symbol
-          in st.session_state.df_gpw_sorted["Symbol"].values
-          and "." not in wybrany_symbol
+          if is_gpw_symbol and "." not in wybrany_symbol
           else wybrany_symbol
       )
 
@@ -308,68 +613,11 @@ with zakladka_wykresy:
           stock_data.columns = stock_data.columns.get_level_values(0)
 
         if not stock_data.empty:
-          st.write(f"### Kurs akcji: {wybrany_symbol} (Okres: {okres})")
+          st.write(f"### Kurs akcji: {wybrany_symbol} (Okres: {wybrany_okres_pl})")
           st.line_chart(stock_data["Close"])
           st.write("#### Wolumen obrotów")
           st.bar_chart(stock_data["Volume"])
         else:
           st.error("Nie udało się pobrać danych wykresu dla tego symbolu.")
   else:
-    st.warning(
-        "Najpierw uruchom skaner S&P 500 lub GPW, aby zasilić listę spółek."
-    )
-
-with zakladka_backtest:
-  st.subheader(
-      "Symulacja Historyczna (Backtest): Strategia Momentum vs Benchmark"
-      " (S&P 500)"
-  )
-  st.write(
-      "Ten moduł sprawdza, jak historycznie (w ciągu ostatnich 3 lat) zachowywał"
-      " się portfel złożony z wybranych liderów w porównaniu do całego funduszu"
-      " S&P 500 (SPY)."
-  )
-
-  if st.button("Uruchom backtest historyczny"):
-    with st.spinner("Pobieram dane historyczne dla testu..."):
-      try:
-        test_symbole = [
-            "AAPL",
-            "MSFT",
-            "NVDA",
-            "GOOGL",
-            "AMZN",
-            "META",
-            "TSLA",
-            "SPY",
-        ]
-        dane_historyczne = yf.download(
-            test_symbole, period="3y", interval="1d", progress=False
-        )["Close"]
-
-        if isinstance(dane_historyczne.columns, pd.MultiIndex):
-          dane_historyczne = dane_historyczne.droplevel(0, axis=1)
-
-        spolki_portfela = [
-            "AAPL",
-            "MSFT",
-            "NVDA",
-            "GOOGL",
-            "AMZN",
-            "META",
-            "TSLA",
-        ]
-        dane_historyczne["Portfel_Modelu"] = dane_historyczne[
-            spolki_portfela
-        ].mean(axis=1)
-        dane_historyczne["Portfel_Znormalizowany"] = (
-            dane_historyczne["Portfel_Modelu"]
-            / dane_historyczne["Portfel_Modelu"].iloc[0]
-        ) * 100
-
-        st.success("Backtest zakończony pomyślnie!")
-        st.line_chart(
-            dane_historyczne[["Portfel_Znormalizowany", "SPY"]], height=400
-        )
-      except Exception as e:
-        st.error(f"Wystąpił błąd podczas symulacji historycznej: {e}")
+    st.warning("Najpierw uruchom dowolny skaner, aby zasilić listę spółek.")
